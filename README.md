@@ -2,7 +2,7 @@
 
 A host-based file integrity monitor (HIDS) written in Go. hashwarden watches a directory tree for unauthorized changes by building a cryptographic Merkle tree snapshot on startup, then re-scanning on a configurable interval. Changed subtrees are identified in O(changed files) time — the full tree is never walked on a clean scan.
 
-[![Go](https://img.shields.io/badge/Go-1.13+-00ADD8.svg)](https://golang.org)
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8.svg)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
@@ -115,7 +115,7 @@ hashwarden/
 
 ## Getting Started
 
-**Requirements:** Go 1.13 or later. No external dependencies — the module uses only the standard library.
+**Requirements:** Go 1.21 or later. No external dependencies — the module uses only the standard library.
 
 ```bash
 git clone https://github.com/DakodaStemen/Hashdog.git

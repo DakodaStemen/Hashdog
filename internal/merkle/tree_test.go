@@ -2,7 +2,6 @@ package merkle_test
 
 import (
 	"fim/internal/merkle"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,7 +10,7 @@ import (
 // helper: create a temp dir with the given file→content map.
 func makeTree(t *testing.T, files map[string]string) string {
 	t.Helper()
-	root, err := ioutil.TempDir("", "fim-test-*")
+	root, err := os.MkdirTemp("", "fim-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +21,7 @@ func makeTree(t *testing.T, files map[string]string) string {
 		if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := ioutil.WriteFile(abs, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(abs, []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,7 +55,7 @@ func TestModified(t *testing.T) {
 	snap1, _ := merkle.Build(root)
 
 	// Mutate the file — one byte change → completely different SHA-256 (avalanche).
-	ioutil.WriteFile(filepath.Join(root, "etc/passwd"), []byte("root:x:0:1"), 0644)
+	os.WriteFile(filepath.Join(root, "etc/passwd"), []byte("root:x:0:1"), 0644)
 
 	snap2, _ := merkle.Build(root)
 
@@ -78,7 +77,7 @@ func TestAdded(t *testing.T) {
 	root := makeTree(t, map[string]string{"a.txt": "a"})
 
 	snap1, _ := merkle.Build(root)
-	ioutil.WriteFile(filepath.Join(root, "b.txt"), []byte("b"), 0644)
+	os.WriteFile(filepath.Join(root, "b.txt"), []byte("b"), 0644)
 	snap2, _ := merkle.Build(root)
 
 	changes := merkle.Diff(snap1, snap2)
@@ -130,7 +129,7 @@ func TestSubtreePruning(t *testing.T) {
 	snap1, _ := merkle.Build(root)
 
 	// Only modify one file under etc/.
-	ioutil.WriteFile(filepath.Join(root, "etc/passwd"), []byte("HACKED"), 0644)
+	os.WriteFile(filepath.Join(root, "etc/passwd"), []byte("HACKED"), 0644)
 
 	snap2, _ := merkle.Build(root)
 

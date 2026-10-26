@@ -35,7 +35,6 @@ package merkle
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -89,7 +88,7 @@ func build(path string, info os.FileInfo) (*Node, error) {
 // SHA-256's avalanche property means even a single changed byte produces
 // a completely different 32-byte digest, making silent tampering detectable.
 func buildLeaf(path string) (*Node, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +103,7 @@ func buildLeaf(path string) (*Node, error) {
 // Children are sorted by path before hashing so the result is deterministic
 // regardless of the readdir order returned by the OS.
 func buildInner(path string) (*Node, error) {
-	entries, err := ioutil.ReadDir(path)
+	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +111,13 @@ func buildInner(path string) (*Node, error) {
 	node := &Node{Path: path, Kind: Dir}
 
 	for _, e := range entries {
-		child, err := build(filepath.Join(path, e.Name()), e)
+		info, err := e.Info()
+		if err != nil {
+			child := errorNode(filepath.Join(path, e.Name()), err)
+			node.Children = append(node.Children, child)
+			continue
+		}
+		child, err := build(filepath.Join(path, e.Name()), info)
 		if err != nil {
 			// One unreadable file should not abort the entire scan.
 			// Use a sentinel hash so the path still shows up in diffs.
