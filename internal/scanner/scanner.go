@@ -3,7 +3,8 @@
 // Two triggers drive re-scans:
 //
 //   - filesystem events (fsnotify), debounced, for near-real-time alerts;
-//     these use the stat-based rehash cache, so only touched files are read.
+//     these use the stat-based rehash cache (size, mtime, ctime, inode), so
+//     only touched files are read — unless Config.Paranoid is set.
 //   - a periodic interval, which does a FULL verify (no cache) and so also
 //     catches anything the event path missed (queue overflow, mtime games).
 package scanner
@@ -28,6 +29,9 @@ type Event struct {
 	OldHash string    `json:"old_hash,omitempty"`
 	NewHash string    `json:"new_hash,omitempty"`
 	Source  string    `json:"source"` // baseline | event | periodic
+	// Changed lists which parts of a MODIFIED file differ: content, mode,
+	// uid, gid, target (symlink), error.
+	Changed []string `json:"changed,omitempty"`
 }
 
 // Sink receives alerts.
@@ -35,13 +39,16 @@ type Sink func(Event)
 
 // Config controls how the monitor behaves.
 type Config struct {
-	Root      string
-	Interval  time.Duration // periodic full verify; <=0 disables
-	Watch     bool          // enable fsnotify event-driven scans
-	Debounce  time.Duration // event coalescing window (default 200ms)
-	Baseline  *merkle.Node  // optional trusted starting snapshot
-	Sinks     []Sink
-	Quiet     bool // suppress informational logs
+	Root     string
+	Interval time.Duration // periodic full verify; <=0 disables
+	Watch    bool          // enable fsnotify event-driven scans
+	Debounce time.Duration // event coalescing window (default 200ms)
+	Baseline *merkle.Node  // optional trusted starting snapshot
+	Sinks    []Sink
+	Quiet    bool // suppress informational logs
+	// Paranoid disables the stat cache entirely: every scan (including
+	// event-triggered ones) reads and hashes every file.
+	Paranoid  bool
 	OnScanned func(source string, changes int)
 }
 
@@ -86,6 +93,7 @@ func (m *Monitor) Snapshot() *merkle.Node { return m.snapshot }
 // and advances the snapshot. full=true bypasses the rehash cache.
 func (m *Monitor) Scan(source string, full bool) []merkle.Change {
 	opt := merkle.Options{}
+	opt.Paranoid = m.cfg.Paranoid
 	if !full {
 		opt.Prev = m.snapshot
 	}
@@ -101,7 +109,7 @@ func (m *Monitor) Scan(source string, full bool) []merkle.Change {
 		changes = merkle.Diff(m.snapshot, next)
 		now := time.Now()
 		for _, c := range changes {
-			ev := Event{Time: now, Kind: string(c.Kind), Path: c.Path, Source: source}
+			ev := Event{Time: now, Kind: string(c.Kind), Path: c.Path, Source: source, Changed: c.Fields}
 			if c.Kind != merkle.Added {
 				ev.OldHash = fmt.Sprintf("%x", c.OldHash)
 			}

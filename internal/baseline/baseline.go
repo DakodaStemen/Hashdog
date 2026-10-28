@@ -19,8 +19,24 @@ import (
 	"github.com/DakodaStemen/hashdog/internal/merkle"
 )
 
+// Version is the baseline format this build writes and reads.
+//
+//	v1  leaf hash = SHA-256(contents)                      (no longer readable)
+//	v2  leaf hash = SHA-256(domain || contents-hash || mode || uid || gid || symlink target);
+//	    symlinks are recorded as leaves; leaves store their hash inputs
+const Version = 2
+
 // ErrTampered is returned when the signature or internal hashes don't check out.
 var ErrTampered = errors.New("baseline tampered or signed by a different key")
+
+// ErrLegacyFormat is returned for an authentic baseline in an older format.
+// v1 trees hash contents only, so they cannot be compared against v2 scans
+// (every leaf would differ); silently "upgrading" one would also mean trusting
+// whatever is on disk now. The operator must re-baseline from a trusted state.
+var ErrLegacyFormat = errors.New("baseline uses a legacy format")
+
+// ErrUnsupportedVersion is returned for a baseline newer than this build understands.
+var ErrUnsupportedVersion = errors.New("baseline format version not supported by this hashdog")
 
 type payload struct {
 	Version  int              `json:"version"`
@@ -45,6 +61,9 @@ func (f File) MarshalJSON() ([]byte, error) {
 
 // RootHash returns the hex root hash recorded in the baseline.
 func (f *File) RootHash() string { return f.payload.RootHash }
+
+// FormatVersion returns the baseline format version recorded in the file.
+func (f *File) FormatVersion() int { return f.payload.Version }
 
 // Created returns the creation timestamp string.
 func (f *File) Created() string { return f.payload.Created }
@@ -90,7 +109,7 @@ func ReadPublicKey(path string) (ed25519.PublicKey, error) {
 // Sign builds a signed baseline for a tree.
 func Sign(tree *merkle.Node, priv ed25519.PrivateKey, now time.Time) *File {
 	p := payload{
-		Version:  1,
+		Version:  Version,
 		Alg:      "ed25519",
 		Created:  now.UTC().Format(time.RFC3339),
 		RootHash: tree.HexHash(),
@@ -128,6 +147,15 @@ func Load(path string, pub ed25519.PublicKey, root string) (*File, *merkle.Node,
 	sig, err := hex.DecodeString(f.Signature)
 	if err != nil || f.Alg != "ed25519" || f.Tree == nil || !ed25519.Verify(pub, f.payload.bytes(), sig) {
 		return nil, nil, ErrTampered
+	}
+	switch {
+	case f.Version == 1:
+		return nil, nil, fmt.Errorf("%w: %s is a validly signed v1 baseline (content-only hashes). "+
+			"This hashdog uses format v%d, which also covers mode, uid/gid and symlink targets, so the two "+
+			"cannot be compared. Re-create it with `hashdog baseline` from a trusted state; v1 baselines are not auto-upgraded",
+			ErrLegacyFormat, path, Version)
+	case f.Version != Version:
+		return nil, nil, fmt.Errorf("%w: file is v%d, this build reads v%d", ErrUnsupportedVersion, f.Version, Version)
 	}
 	tree, err := merkle.FromSnapshot(root, f.Tree)
 	if err != nil {

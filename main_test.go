@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DakodaStemen/hashdog/internal/baseline"
@@ -52,5 +53,23 @@ func TestCLIProof(t *testing.T) {
 	}
 	if err := cmdVerifyProof([]string{"-proof", pf, "-root", "00", "-content", filepath.Join(d, "g")}); err == nil {
 		t.Fatal("wrong content must fail")
+	}
+}
+
+func TestCLIRejectsLegacyBaselineClearly(t *testing.T) {
+	d := t.TempDir()
+	root := filepath.Join(d, "tree")
+	os.MkdirAll(root, 0o755)
+	os.WriteFile(filepath.Join(root, "f"), []byte("one"), 0o644)
+	key, bl := filepath.Join(d, "k"), filepath.Join(d, "b.json")
+	cmdKeygen([]string{"-out", key})
+	if err := cmdBaseline([]string{"-dir", root, "-key", key + ".key", "-out", bl}); err != nil {
+		t.Fatal(err)
+	}
+	// A v2 baseline with its version field edited is simply tampered (signature covers it).
+	b, _ := os.ReadFile(bl)
+	os.WriteFile(bl, []byte(strings.Replace(string(b), `"version": 2`, `"version": 1`, 1)), 0o644)
+	if err := cmdCheck([]string{"-dir", root, "-baseline", bl, "-pub", key + ".pub"}); !errors.Is(err, baseline.ErrTampered) {
+		t.Fatalf("downgraded version field must fail signature check, got %v", err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -127,7 +128,7 @@ func TestJSONAndTextSinks(t *testing.T) {
 	var jb bytes.Buffer
 	scanner.JSONSink(&jb)(e)
 	var back scanner.Event
-	if err := json.Unmarshal(jb.Bytes(), &back); err != nil || back != e {
+	if err := json.Unmarshal(jb.Bytes(), &back); err != nil || !reflect.DeepEqual(back, e) {
 		t.Fatalf("json round trip: %v %+v", err, back)
 	}
 	var tb bytes.Buffer
@@ -137,5 +138,46 @@ func TestJSONAndTextSinks(t *testing.T) {
 	}
 	if l := scanner.FormatLine(e); !strings.Contains(l, `path="/x"`) {
 		t.Fatal(l)
+	}
+}
+
+func TestEventCarriesChangedFields(t *testing.T) {
+	root := t.TempDir()
+	f := filepath.Join(root, "f")
+	os.WriteFile(f, []byte("a"), 0o644)
+	c := &collector{}
+	m, _ := scanner.New(scanner.Config{Root: root, Sinks: []scanner.Sink{c.sink}, Quiet: true})
+	os.Chmod(f, 0o700)
+	m.Scan("periodic", true)
+	e := waitFor(t, c, "MODIFIED", "f")
+	if !reflect.DeepEqual(e.Changed, []string{"mode"}) {
+		t.Fatalf("changed=%v", e.Changed)
+	}
+	var tb bytes.Buffer
+	scanner.TextSink(&tb)(e)
+	if !strings.Contains(tb.String(), "changed: mode") || !strings.Contains(scanner.FormatLine(e), "changed=mode") {
+		t.Fatal("sinks should show changed fields")
+	}
+}
+
+// Poison the cached content hash of an otherwise-trusted entry: an event scan
+// that reuses it reports a bogus change, a paranoid one re-reads the file and
+// reports none. This distinguishes "cache used" from "cache bypassed".
+func TestParanoidBypassesCache(t *testing.T) {
+	run := func(paranoid bool) int {
+		root := t.TempDir()
+		os.WriteFile(filepath.Join(root, "f"), []byte("a"), 0o644)
+		base, _ := merkle.Build(root)
+		leaf := base.Children[0]
+		leaf.Hashed = time.Now().Add(time.Minute)
+		leaf.ContentHash = [32]byte{0xEE}
+		m, _ := scanner.New(scanner.Config{Root: root, Baseline: base, Paranoid: paranoid, Quiet: true})
+		return len(m.Scan("event", false))
+	}
+	if run(false) == 0 {
+		t.Skip("platform has no ctime: cache disabled")
+	}
+	if n := run(true); n != 0 {
+		t.Fatalf("paranoid scan reused cache (%d changes)", n)
 	}
 }

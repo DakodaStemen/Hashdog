@@ -2,8 +2,8 @@
 //
 //	hashdog keygen    -out hashdog              create ed25519 keypair
 //	hashdog baseline  -dir D -key K -out B      write a signed baseline
-//	hashdog check     -dir D -baseline B -pub P one-shot verify (exit 1 = changes, 2 = tampered baseline)
-//	hashdog watch     -dir D [-baseline B -pub P] [-interval 5m] [-json] [-syslog]
+//	hashdog check     -dir D -baseline B -pub P one-shot verify (exit 1 = changes, 2 = tampered baseline, 4 = legacy/unsupported baseline format)
+//	hashdog watch     -dir D [-baseline B -pub P] [-interval 5m] [-paranoid] [-json] [-syslog]
 //	hashdog proof     -dir D -file REL          Merkle inclusion proof (JSON) + self-check
 //	hashdog verify-proof -proof F -root HEX     verify a proof offline
 package main
@@ -57,6 +57,9 @@ func main() {
 		}
 		if errors.Is(err, errChanges) {
 			os.Exit(1)
+		}
+		if errors.Is(err, baseline.ErrLegacyFormat) || errors.Is(err, baseline.ErrUnsupportedVersion) {
+			os.Exit(4)
 		}
 		os.Exit(3)
 	}
@@ -164,13 +167,14 @@ func cmdWatch(args []string) error {
 	interval := fs.Duration("interval", 5*time.Minute, "periodic full-verify interval (0 disables)")
 	events := fs.Bool("events", true, "react to filesystem events (fsnotify)")
 	debounce := fs.Duration("debounce", 200*time.Millisecond, "event coalescing window")
+	paranoid := fs.Bool("paranoid", false, "never use the stat cache: every scan (including event-triggered) rehashes every file")
 	bl := fs.String("baseline", "", "signed baseline to start from (optional)")
 	pub := fs.String("pub", "hashdog.pub", "public key for -baseline")
 	js := fs.Bool("json", false, "JSON-lines alerts")
 	sys := fs.Bool("syslog", false, "also send alerts to syslog")
 	fs.Parse(args)
 
-	cfg := scanner.Config{Root: *dir, Interval: *interval, Watch: *events, Debounce: *debounce}
+	cfg := scanner.Config{Root: *dir, Interval: *interval, Watch: *events, Debounce: *debounce, Paranoid: *paranoid}
 	if *bl != "" {
 		tree, err := loadBaseline(*bl, *pub, *dir)
 		if err != nil {
@@ -249,8 +253,13 @@ func cmdVerifyProof(args []string) error {
 		if _, err := io.Copy(h, f); err != nil {
 			return err
 		}
-		if got := hex.EncodeToString(h.Sum(nil)); got != p.LeafHash {
-			return fmt.Errorf("file %s hashes to %s, proof is for %s", filepath.Base(*content), got, p.LeafHash)
+		if got := hex.EncodeToString(h.Sum(nil)); got != p.ContentHash {
+			return fmt.Errorf("file %s hashes to %s, proof is for content %s", filepath.Base(*content), got, p.ContentHash)
+		}
+		// Metadata is bound to the leaf by the proof itself (checked in Verify);
+		// compare the live file against it so a chmod'ed copy is flagged.
+		if fi, err := os.Lstat(*content); err == nil && merkle.ModeBits(fi.Mode()) != p.Mode {
+			fmt.Fprintf(os.Stderr, "warning: %s has mode %o, proof recorded %o\n", filepath.Base(*content), merkle.ModeBits(fi.Mode()), p.Mode)
 		}
 	}
 	if err := p.Verify(*root); err != nil {

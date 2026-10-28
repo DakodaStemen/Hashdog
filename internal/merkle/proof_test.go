@@ -1,10 +1,7 @@
 package merkle_test
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/DakodaStemen/hashdog/internal/merkle"
 )
@@ -61,33 +58,3 @@ func TestSnapshotRoundTripAndTamper(t *testing.T) {
 		t.Fatal("inconsistent snapshot accepted")
 	}
 }
-
-func TestRehashCache(t *testing.T) {
-	root := makeTree(t, map[string]string{"old": "v1", "new": "v1"})
-	// Make "old" clearly not racily clean.
-	past := mustTime(-time.Hour)
-	os.Chtimes(filepath.Join(root, "old"), past, past)
-	// Sleep-free: pretend the first scan happened long after the mtime.
-	prev, _ := merkle.Build(root)
-
-	// Overwrite "old" with same-size content but keep its mtime: the cache
-	// must (by design) trust it. This documents the trade-off.
-	os.WriteFile(filepath.Join(root, "old"), []byte("v2"), 0o644)
-	os.Chtimes(filepath.Join(root, "old"), past, past)
-	cached, _ := merkle.BuildWith(root, merkle.Options{Prev: prev})
-	full, _ := merkle.Build(root)
-	if cached.Hash != prev.Hash {
-		t.Fatal("expected cache to trust unchanged stat")
-	}
-	if full.Hash == prev.Hash {
-		t.Fatal("full verify must catch mtime-preserving tamper")
-	}
-	// A real mtime change is always rehashed.
-	os.WriteFile(filepath.Join(root, "old"), []byte("v3"), 0o644)
-	cached, _ = merkle.BuildWith(root, merkle.Options{Prev: prev})
-	if cached.Hash == prev.Hash {
-		t.Fatal("changed mtime should force rehash")
-	}
-}
-
-func mustTime(d time.Duration) time.Time { return time.Now().Add(d) }
