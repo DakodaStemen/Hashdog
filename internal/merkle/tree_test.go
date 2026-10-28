@@ -1,7 +1,7 @@
 package merkle_test
 
 import (
-	"fim/internal/merkle"
+	"github.com/DakodaStemen/hashdog/internal/merkle"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,7 +10,7 @@ import (
 // helper: create a temp dir with the given file→content map.
 func makeTree(t *testing.T, files map[string]string) string {
 	t.Helper()
-	root, err := os.MkdirTemp("", "fim-test-*")
+	root, err := os.MkdirTemp("", "hashdog-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,9 +121,9 @@ func TestAvalanche(t *testing.T) {
 // demonstrating the O(changed_files) diff optimisation.
 func TestSubtreePruning(t *testing.T) {
 	root := makeTree(t, map[string]string{
-		"bin/sh":      "shell",
-		"etc/passwd":  "passwords",
-		"etc/hosts":   "127.0.0.1 localhost",
+		"bin/sh":     "shell",
+		"etc/passwd": "passwords",
+		"etc/hosts":  "127.0.0.1 localhost",
 	})
 
 	snap1, _ := merkle.Build(root)

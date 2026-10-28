@@ -1,0 +1,8 @@
+files: 8000
+MB: 532
+find|xargs sha256sum:        1623 ms (min 1235, max 5103)
+find|xargs -P sha256sum:     502 ms (min 304, max 1044)
+hashdog baseline (full):     945 ms (min 647, max 3443)
+cpu: AMD Ryzen 7 5800H with Radeon Graphics         
+BenchmarkFullBuild-16       	       5	 970070734 ns/op
+BenchmarkCachedRescan-16    	       5	 225805720 ns/op

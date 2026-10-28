@@ -1,0 +1,30 @@
+# Sample unit. Install:
+#   sudo install -m 0755 hashdog /usr/local/bin/hashdog
+#   sudo install -d /etc/hashdog
+#   sudo hashdog keygen -out /etc/hashdog/hashdog          # keep .key OFF this host after signing!
+#   sudo hashdog baseline -dir /etc -key /etc/hashdog/hashdog.key -out /etc/hashdog/baseline.json
+#   sudo cp contrib/hashdog.service /etc/systemd/system/ && sudo systemctl enable --now hashdog
+# Read alerts:  journalctl -u hashdog -f      or      journalctl -t hashdog
+[Unit]
+Description=hashdog Merkle-tree file integrity monitor
+After=local-fs.target network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hashdog watch -dir /etc \
+    -baseline /etc/hashdog/baseline.json -pub /etc/hashdog/hashdog.pub \
+    -interval 15m -json -syslog
+Restart=on-failure
+RestartSec=5
+
+# Hardening: it only needs to read the watched tree and talk to syslog.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+ReadOnlyPaths=/etc
+
+[Install]
+WantedBy=multi-user.target

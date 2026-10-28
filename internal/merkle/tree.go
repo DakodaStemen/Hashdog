@@ -20,24 +20,28 @@
 //
 // Example layout:
 //
-//   /watched
-//   ├── etc/
-//   │   ├── passwd   → leaf H(passwd)
-//   │   └── hosts    → leaf H(hosts)
-//   └── bin/
-//       └── sh       → leaf H(sh)
+//	/watched
+//	├── etc/
+//	│   ├── passwd   → leaf H(passwd)
+//	│   └── hosts    → leaf H(hosts)
+//	└── bin/
+//	    └── sh       → leaf H(sh)
 //
-//   Node("etc")  = H( H(hosts) ++ H(passwd) )   // sorted by path
-//   Node("bin")  = H( H(sh) )
-//   Root         = H( Node("bin") ++ Node("etc") )
+//	Node("etc")  = H( H(hosts) ++ H(passwd) )   // sorted by path
+//	Node("bin")  = H( H(sh) )
+//	Root         = H( Node("bin") ++ Node("etc") )
 package merkle
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"sync"
+	"time"
 )
 
 // Kind distinguishes a file leaf from a directory inner node.
@@ -56,6 +60,12 @@ type Node struct {
 	Hash     [32]byte // SHA-256 of contents (file) or children hashes (dir)
 	Kind     Kind
 	Children []*Node
+
+	// Stat metadata for file leaves, used only by the optional rehash cache
+	// (see Options). Never part of the hash.
+	Size    int64
+	ModTime int64     // UnixNano
+	Hashed  time.Time // when the contents were actually read and hashed
 }
 
 // HexHash returns the hash as a lowercase hex string, useful for log output.
@@ -63,46 +73,92 @@ func (n *Node) HexHash() string {
 	return hex.EncodeToString(n.Hash[:])
 }
 
-// Build walks root and returns the Merkle tree for that directory.
-// Symlinks are skipped; following them risks cycles and blurs the boundary
-// of what is actually being monitored.
-func Build(root string) (*Node, error) {
+// racyWindow: a file whose mtime is within this window of the moment it was
+// last hashed could have been modified again without changing its mtime, so
+// the cache never trusts it (same idea as git's "racily clean" entries).
+const racyWindow = 2 * time.Second
+
+// Options tunes Build.
+type Options struct {
+	// Prev, when non-nil, enables a stat-based rehash cache: a file whose
+	// size and mtime match its entry in Prev (and is not racily clean) reuses
+	// the old hash instead of being read again. This is fast but is NOT a
+	// full verification, since an attacker can restore mtime. Leave nil for a
+	// full verify.
+	Prev *Node
+}
+
+// Build walks root and returns the Merkle tree for that directory, reading
+// and hashing every file. Symlinks are skipped; following them risks cycles
+// and blurs the boundary of what is actually being monitored.
+func Build(root string) (*Node, error) { return BuildWith(root, Options{}) }
+
+// BuildWith is Build with options.
+func BuildWith(root string, opt Options) (*Node, error) {
 	info, err := os.Lstat(root)
 	if err != nil {
 		return nil, err
 	}
-	return build(root, info)
+	b := &builder{sem: make(chan struct{}, runtime.NumCPU())}
+	if opt.Prev != nil {
+		b.prev = map[string]*Node{}
+		collectLeaves(opt.Prev, func(n *Node) { b.prev[n.Path] = n })
+	}
+	return b.build(root, info)
 }
 
-func build(path string, info os.FileInfo) (*Node, error) {
+var bufPool = sync.Pool{New: func() any { b := make([]byte, 256<<10); return &b }}
+
+type builder struct {
+	prev map[string]*Node
+	sem  chan struct{} // bounds concurrent file reads/hashes
+}
+
+func (b *builder) build(path string, info os.FileInfo) (*Node, error) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return nil, nil
 	}
-	if !info.IsDir() {
-		return buildLeaf(path)
+	if info.IsDir() {
+		return b.buildInner(path)
 	}
-	return buildInner(path)
+	if !info.Mode().IsRegular() {
+		return nil, nil // sockets, devices, FIFOs: reading could block
+	}
+	return b.buildLeaf(path, info)
 }
 
-// buildLeaf hashes the raw byte contents of a regular file.
+// buildLeaf hashes the raw byte contents of a regular file (streamed).
 // SHA-256's avalanche property means even a single changed byte produces
 // a completely different 32-byte digest, making silent tampering detectable.
-func buildLeaf(path string) (*Node, error) {
-	data, err := os.ReadFile(path)
+func (b *builder) buildLeaf(path string, info os.FileInfo) (*Node, error) {
+	mt := info.ModTime().UnixNano()
+	if p, ok := b.prev[path]; ok && p.Size == info.Size() && p.ModTime == mt &&
+		p.Hashed.Sub(info.ModTime()) > racyWindow {
+		c := *p
+		return &c, nil
+	}
+	b.sem <- struct{}{}
+	defer func() { <-b.sem }()
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	return &Node{
-		Path: path,
-		Hash: sha256.Sum256(data),
-		Kind: File,
-	}, nil
+	defer f.Close()
+	h := sha256.New()
+	bp := bufPool.Get().(*[]byte)
+	defer bufPool.Put(bp)
+	if _, err := io.CopyBuffer(struct{ io.Writer }{h}, struct{ io.Reader }{f}, *bp); err != nil {
+		return nil, err
+	}
+	n := &Node{Path: path, Kind: File, Size: info.Size(), ModTime: mt, Hashed: time.Now()}
+	copy(n.Hash[:], h.Sum(nil))
+	return n, nil
 }
 
 // buildInner recursively builds child nodes, then hashes their digests.
 // Children are sorted by path before hashing so the result is deterministic
 // regardless of the readdir order returned by the OS.
-func buildInner(path string) (*Node, error) {
+func (b *builder) buildInner(path string) (*Node, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
@@ -110,21 +166,33 @@ func buildInner(path string) (*Node, error) {
 
 	node := &Node{Path: path, Kind: Dir}
 
-	for _, e := range entries {
-		info, err := e.Info()
-		if err != nil {
-			child := errorNode(filepath.Join(path, e.Name()), err)
-			node.Children = append(node.Children, child)
-			continue
-		}
-		child, err := build(filepath.Join(path, e.Name()), info)
-		if err != nil {
-			// One unreadable file should not abort the entire scan.
-			// Use a sentinel hash so the path still shows up in diffs.
-			child = errorNode(filepath.Join(path, e.Name()), err)
-		}
-		if child != nil {
-			node.Children = append(node.Children, child)
+	// Children are built concurrently (file hashing is bounded by b.sem);
+	// results land in a fixed slot so ordering stays deterministic.
+	results := make([]*Node, len(entries))
+	var wg sync.WaitGroup
+	for i, e := range entries {
+		wg.Add(1)
+		go func(i int, e os.DirEntry) {
+			defer wg.Done()
+			cp := filepath.Join(path, e.Name())
+			info, err := e.Info()
+			if err != nil {
+				results[i] = errorNode(cp, err)
+				return
+			}
+			child, err := b.build(cp, info)
+			if err != nil {
+				// One unreadable file should not abort the entire scan.
+				// Use a sentinel hash so the path still shows up in diffs.
+				child = errorNode(cp, err)
+			}
+			results[i] = child
+		}(i, e)
+	}
+	wg.Wait()
+	for _, c := range results {
+		if c != nil {
+			node.Children = append(node.Children, c)
 		}
 	}
 
@@ -215,6 +283,11 @@ func diff(old, next *Node, out *[]Change) {
 			OldHash: old.Hash,
 			NewHash: next.Hash,
 		})
+
+	case old.Kind != next.Kind:
+		// File became a directory or vice versa: remove one, add the other.
+		diff(old, nil, out)
+		diff(nil, next, out)
 
 	default:
 		// Directory node with changed hash: recurse into children.
