@@ -156,3 +156,9 @@ func TestCLIBadRuleRejected(t *testing.T) {
 		t.Fatal("bad glob accepted")
 	}
 }
+
+func TestVersionString(t *testing.T) {
+	if v := versionString(); !strings.Contains(v, "hashdog dev") || !strings.Contains(v, "baseline format v2") {
+		t.Fatal(v)
+	}
+}

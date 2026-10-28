@@ -5,6 +5,7 @@
 //	hashdog check     -dir D -baseline B -pub P one-shot verify (exit 1 = changes, 2 = tampered baseline, 4 = legacy/unsupported baseline format)
 //	hashdog watch     -dir D [-baseline B -pub P] [-interval 5m] [-paranoid] [-json] [-syslog]
 //	hashdog proof     -dir D -file REL          Merkle inclusion proof (JSON) + self-check
+//	hashdog version                              print version and baseline format
 //	hashdog verify-proof -proof F -root HEX     verify a proof offline
 package main
 
@@ -31,6 +32,13 @@ import (
 	"github.com/DakodaStemen/hashdog/internal/scanner"
 )
 
+// Set at release time by goreleaser via -ldflags.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -50,6 +58,8 @@ func main() {
 		err = cmdProof(args)
 	case "verify-proof":
 		err = cmdVerifyProof(args)
+	case "version", "-version", "--version":
+		fmt.Println(versionString())
 	default:
 		usage()
 	}
@@ -344,3 +354,7 @@ func cmdVerifyProof(args []string) error {
 }
 
 func init() { log.SetFlags(log.Ltime) }
+
+func versionString() string {
+	return fmt.Sprintf("hashdog %s (commit %s, built %s, baseline format v%d)", version, commit, date, baseline.Version)
+}
