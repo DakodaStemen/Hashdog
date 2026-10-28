@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DakodaStemen/hashdog/internal/filter"
 	"github.com/DakodaStemen/hashdog/internal/merkle"
 	"github.com/DakodaStemen/hashdog/internal/scanner"
 )
@@ -179,5 +180,31 @@ func TestParanoidBypassesCache(t *testing.T) {
 	}
 	if n := run(true); n != 0 {
 		t.Fatalf("paranoid scan reused cache (%d changes)", n)
+	}
+}
+
+func TestExcludedEventsAreSilent(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "cache"), 0o755)
+	os.WriteFile(filepath.Join(root, "keep"), []byte("1"), 0o644)
+	rules, _ := filter.New(nil, []string{"cache/", "*.log"})
+	c := &collector{}
+	m, _ := scanner.New(scanner.Config{Root: root, Watch: true, Debounce: 50 * time.Millisecond, Rules: rules,
+		Sinks: []scanner.Sink{c.sink}, Quiet: true})
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() { m.Run(done); close(stopped) }()
+	defer func() { close(done); <-stopped }()
+	time.Sleep(200 * time.Millisecond)
+
+	os.WriteFile(filepath.Join(root, "cache", "blob"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(root, "app.log"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(root, "keep"), []byte("2"), 0o644)
+	waitFor(t, c, "MODIFIED", "keep")
+	time.Sleep(300 * time.Millisecond)
+	for _, e := range c.snapshot() {
+		if strings.HasSuffix(e.Path, "blob") || strings.HasSuffix(e.Path, ".log") {
+			t.Fatalf("alert for excluded path: %+v", e)
+		}
 	}
 }

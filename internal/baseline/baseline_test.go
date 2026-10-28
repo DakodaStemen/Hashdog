@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DakodaStemen/hashdog/internal/baseline"
+	"github.com/DakodaStemen/hashdog/internal/filter"
 	"github.com/DakodaStemen/hashdog/internal/merkle"
 )
 
@@ -93,5 +94,33 @@ func TestKeyFiles(t *testing.T) {
 	rk, err := baseline.ReadPrivateKey(p + ".key")
 	if err != nil || !priv.Equal(rk) {
 		t.Fatal("private key round trip")
+	}
+}
+
+func TestRulesAreSigned(t *testing.T) {
+	root, bl, _ := setup(t)
+	rules, _ := filter.New([]string{"etc/**"}, []string{"*.log"})
+	tree, _ := merkle.BuildWith(root, merkle.Options{Rules: rules})
+	pub, priv, _ := baseline.GenerateKey()
+	if err := baseline.Save(bl, baseline.SignWith(tree, priv, time.Now(), rules)); err != nil {
+		t.Fatal(err)
+	}
+	f, _, err := baseline.Load(bl, pub, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.Rules()
+	if err != nil || !filter.Equal(got, rules) {
+		t.Fatalf("rules did not round-trip: %v", err)
+	}
+	// Widening the exclusions in the file must break the signature.
+	b, _ := os.ReadFile(bl)
+	mut := strings.Replace(string(b), `"*.log"`, `"*.log", "*"`, 1)
+	if mut == string(b) {
+		t.Fatal("mutation did not apply")
+	}
+	os.WriteFile(bl, []byte(mut), 0o644)
+	if _, _, err := baseline.Load(bl, pub, root); !errors.Is(err, baseline.ErrTampered) {
+		t.Fatalf("want ErrTampered, got %v", err)
 	}
 }

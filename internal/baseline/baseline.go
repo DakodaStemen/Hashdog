@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DakodaStemen/hashdog/internal/filter"
 	"github.com/DakodaStemen/hashdog/internal/merkle"
 )
 
@@ -44,6 +45,16 @@ type payload struct {
 	Created  string           `json:"created"`
 	RootHash string           `json:"root_hash"`
 	Tree     *merkle.SnapNode `json:"tree"`
+	// Rules are the include/exclude globs the tree was built with. They are
+	// signed, so a verifier scans with exactly the same rules and an attacker
+	// cannot widen the exclusions by editing a config file.
+	Rules *RuleSet `json:"rules,omitempty"`
+}
+
+// RuleSet is the serialised form of filter.Rules.
+type RuleSet struct {
+	Include []string `json:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
 }
 
 // File is the on-disk format.
@@ -61,6 +72,14 @@ func (f File) MarshalJSON() ([]byte, error) {
 
 // RootHash returns the hex root hash recorded in the baseline.
 func (f *File) RootHash() string { return f.payload.RootHash }
+
+// Rules compiles the include/exclude rules recorded in the baseline (nil if none).
+func (f *File) Rules() (*filter.Rules, error) {
+	if f.payload.Rules == nil {
+		return nil, nil
+	}
+	return filter.New(f.payload.Rules.Include, f.payload.Rules.Exclude)
+}
 
 // FormatVersion returns the baseline format version recorded in the file.
 func (f *File) FormatVersion() int { return f.payload.Version }
@@ -106,14 +125,22 @@ func ReadPublicKey(path string) (ed25519.PublicKey, error) {
 	return readHex(path, ed25519.PublicKeySize)
 }
 
-// Sign builds a signed baseline for a tree.
+// Sign builds a signed baseline for a tree built without include/exclude rules.
 func Sign(tree *merkle.Node, priv ed25519.PrivateKey, now time.Time) *File {
+	return SignWith(tree, priv, now, nil)
+}
+
+// SignWith is Sign, recording the rules the tree was built with.
+func SignWith(tree *merkle.Node, priv ed25519.PrivateKey, now time.Time, rules *filter.Rules) *File {
 	p := payload{
 		Version:  Version,
 		Alg:      "ed25519",
 		Created:  now.UTC().Format(time.RFC3339),
 		RootHash: tree.HexHash(),
 		Tree:     merkle.Snapshot(tree),
+	}
+	if in, ex := rules.Lists(); len(in)+len(ex) > 0 {
+		p.Rules = &RuleSet{Include: in, Exclude: ex}
 	}
 	return &File{payload: p, Signature: hex.EncodeToString(ed25519.Sign(priv, p.bytes()))}
 }

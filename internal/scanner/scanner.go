@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/DakodaStemen/hashdog/internal/filter"
 	"github.com/DakodaStemen/hashdog/internal/merkle"
 	"github.com/fsnotify/fsnotify"
 )
@@ -44,6 +45,7 @@ type Config struct {
 	Watch    bool          // enable fsnotify event-driven scans
 	Debounce time.Duration // event coalescing window (default 200ms)
 	Baseline *merkle.Node  // optional trusted starting snapshot
+	Rules    *filter.Rules // include/exclude globs; must match those of Baseline
 	Sinks    []Sink
 	Quiet    bool // suppress informational logs
 	// Paranoid disables the stat cache entirely: every scan (including
@@ -71,7 +73,7 @@ func New(cfg Config) (*Monitor, error) {
 		return m, nil
 	}
 	m.logf("building baseline snapshot of %s", cfg.Root)
-	snap, err := merkle.Build(cfg.Root)
+	snap, err := merkle.BuildWith(cfg.Root, merkle.Options{Rules: cfg.Rules, Paranoid: cfg.Paranoid})
 	if err != nil {
 		return nil, fmt.Errorf("initial scan failed: %w", err)
 	}
@@ -92,7 +94,7 @@ func (m *Monitor) Snapshot() *merkle.Node { return m.snapshot }
 // Scan rebuilds the tree, diffs against the current snapshot, emits alerts
 // and advances the snapshot. full=true bypasses the rehash cache.
 func (m *Monitor) Scan(source string, full bool) []merkle.Change {
-	opt := merkle.Options{}
+	opt := merkle.Options{Rules: m.cfg.Rules}
 	opt.Paranoid = m.cfg.Paranoid
 	if !full {
 		opt.Prev = m.snapshot
@@ -128,8 +130,20 @@ func (m *Monitor) Scan(source string, full bool) []merkle.Change {
 	return changes
 }
 
+// excluded reports whether path is filtered out by the configured rules.
+func (m *Monitor) excluded(path string, isDir bool) bool {
+	if m.cfg.Rules == nil || path == m.cfg.Root {
+		return false
+	}
+	rel, err := filepath.Rel(m.cfg.Root, path)
+	return err == nil && m.cfg.Rules.Skip(filepath.ToSlash(rel), isDir)
+}
+
 func (m *Monitor) addTree(dir string) {
 	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() && m.excluded(p, true) {
+			return filepath.SkipDir
+		}
 		if err == nil && d.IsDir() {
 			if err := m.watcher.Add(p); err != nil {
 				m.logf("watch %s: %v", p, err)
@@ -170,10 +184,15 @@ func (m *Monitor) Run(done <-chan struct{}) error {
 	for {
 		select {
 		case ev := <-events:
-			if ev.Has(fsnotify.Create) {
-				if fi, err := os.Lstat(ev.Name); err == nil && fi.IsDir() {
-					m.addTree(ev.Name)
-				}
+			isDir := false
+			if fi, err := os.Lstat(ev.Name); err == nil {
+				isDir = fi.IsDir()
+			}
+			if m.excluded(ev.Name, isDir) {
+				break // excluded path: don't wake the scanner
+			}
+			if ev.Has(fsnotify.Create) && isDir {
+				m.addTree(ev.Name)
 			}
 			debounce.Reset(m.cfg.Debounce)
 		case err := <-werrs:

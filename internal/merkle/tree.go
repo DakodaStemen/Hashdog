@@ -48,6 +48,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/DakodaStemen/hashdog/internal/filter"
 )
 
 // Kind distinguishes a file leaf from a directory inner node.
@@ -139,6 +141,10 @@ type Options struct {
 	// effort, ctime and inode). Leave nil for a full verify.
 	Prev *Node
 
+	// Rules, if non-nil, leaves matching paths out of the tree (and out of
+	// the root hash). The same rules must be used for baseline and scans.
+	Rules *filter.Rules
+
 	// Paranoid ignores Prev: every file is read and hashed on every build.
 	Paranoid bool
 }
@@ -161,7 +167,7 @@ func BuildWith(root string, opt Options) (*Node, error) {
 			return nil, err
 		}
 	}
-	b := &builder{sem: make(chan struct{}, runtime.NumCPU())}
+	b := &builder{sem: make(chan struct{}, runtime.NumCPU()), root: root, rules: opt.Rules}
 	if opt.Prev != nil && !opt.Paranoid {
 		b.prev = map[string]*Node{}
 		collectLeaves(opt.Prev, func(n *Node) { b.prev[n.Path] = n })
@@ -172,11 +178,18 @@ func BuildWith(root string, opt Options) (*Node, error) {
 var bufPool = sync.Pool{New: func() any { b := make([]byte, 256<<10); return &b }}
 
 type builder struct {
-	prev map[string]*Node
-	sem  chan struct{} // bounds concurrent file reads/hashes
+	root  string
+	rules *filter.Rules
+	prev  map[string]*Node
+	sem   chan struct{} // bounds concurrent file reads/hashes
 }
 
 func (b *builder) build(path string, info os.FileInfo) (*Node, error) {
+	if b.rules != nil && path != b.root {
+		if rel, err := filepath.Rel(b.root, path); err == nil && b.rules.Skip(filepath.ToSlash(rel), info.IsDir()) {
+			return nil, nil
+		}
+	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return b.buildLink(path, info)
 	}
