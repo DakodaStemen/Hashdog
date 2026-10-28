@@ -15,6 +15,9 @@ func TextSink(w io.Writer) Sink {
 		mu.Lock()
 		defer mu.Unlock()
 		fmt.Fprintf(w, "[ALERT] %-8s %s  (%s)\n", e.Kind, e.Path, e.Source)
+		if len(e.Attack) > 0 {
+			fmt.Fprintf(w, "        attack: %s\n", strings.Join(e.Attack, ","))
+		}
 		if len(e.Changed) > 0 {
 			fmt.Fprintf(w, "        changed: %s\n", strings.Join(e.Changed, ","))
 		}
@@ -43,6 +46,9 @@ func FormatLine(e Event) string {
 	l := fmt.Sprintf("%s path=%q old=%s new=%s source=%s", e.Kind, e.Path, e.OldHash, e.NewHash, e.Source)
 	if len(e.Changed) > 0 {
 		l += " changed=" + strings.Join(e.Changed, ",")
+	}
+	if len(e.Attack) > 0 {
+		l += " attack=" + strings.Join(e.Attack, ",")
 	}
 	return l
 }

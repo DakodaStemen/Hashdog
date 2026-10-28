@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/DakodaStemen/hashdog/internal/attack"
 	"github.com/DakodaStemen/hashdog/internal/filter"
 	"github.com/DakodaStemen/hashdog/internal/merkle"
 	"github.com/fsnotify/fsnotify"
@@ -33,6 +34,9 @@ type Event struct {
 	// Changed lists which parts of a MODIFIED file differ: content, mode,
 	// uid, gid, target (symlink), error.
 	Changed []string `json:"changed,omitempty"`
+	// Attack lists MITRE ATT&CK technique IDs commonly associated with changes
+	// to this path (see package attack). A triage hint, not a verdict.
+	Attack []string `json:"attack,omitempty"`
 }
 
 // Sink receives alerts.
@@ -111,7 +115,7 @@ func (m *Monitor) Scan(source string, full bool) []merkle.Change {
 		changes = merkle.Diff(m.snapshot, next)
 		now := time.Now()
 		for _, c := range changes {
-			ev := Event{Time: now, Kind: string(c.Kind), Path: c.Path, Source: source, Changed: c.Fields}
+			ev := Event{Time: now, Kind: string(c.Kind), Path: c.Path, Source: source, Changed: c.Fields, Attack: attack.Lookup(c.Path)}
 			if c.Kind != merkle.Added {
 				ev.OldHash = fmt.Sprintf("%x", c.OldHash)
 			}

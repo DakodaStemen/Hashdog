@@ -208,3 +208,38 @@ func TestExcludedEventsAreSilent(t *testing.T) {
 		}
 	}
 }
+
+func TestJSONAlertCarriesAttackField(t *testing.T) {
+	e := scanner.Event{Time: time.Unix(0, 0).UTC(), Kind: "MODIFIED", Path: "/etc/passwd", Source: "event", Attack: []string{"T1098", "T1136.001"}}
+	var jb bytes.Buffer
+	scanner.JSONSink(&jb)(e)
+	var raw map[string]any
+	if err := json.Unmarshal(jb.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := raw["attack"].([]any)
+	if len(got) != 2 || got[0] != "T1098" || got[1] != "T1136.001" {
+		t.Fatalf("attack=%v in %s", raw["attack"], jb.String())
+	}
+	if !strings.Contains(scanner.FormatLine(e), "attack=T1098,T1136.001") {
+		t.Fatal(scanner.FormatLine(e))
+	}
+	// no mapping -> field omitted entirely
+	jb.Reset()
+	scanner.JSONSink(&jb)(scanner.Event{Kind: "ADDED", Path: "/srv/x"})
+	if strings.Contains(jb.String(), "attack") {
+		t.Fatalf("empty attack must be omitted: %s", jb.String())
+	}
+}
+
+func TestScanTagsMappedPathsOnly(t *testing.T) {
+	root := t.TempDir() // not under /etc, so nothing should be tagged
+	os.WriteFile(filepath.Join(root, "passwd"), []byte("a"), 0o644)
+	c := &collector{}
+	m, _ := scanner.New(scanner.Config{Root: root, Sinks: []scanner.Sink{c.sink}, Quiet: true})
+	os.WriteFile(filepath.Join(root, "passwd"), []byte("b"), 0o644)
+	m.Scan("periodic", true)
+	if e := waitFor(t, c, "MODIFIED", "passwd"); len(e.Attack) != 0 {
+		t.Fatalf("tmp copy of passwd tagged: %v", e.Attack)
+	}
+}
