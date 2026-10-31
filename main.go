@@ -1,10 +1,11 @@
 // hashdog — Merkle-tree file integrity monitor.
 //
 //	hashdog keygen    -out hashdog              create ed25519 keypair
-//	hashdog baseline  -dir D -key K -out B      write a signed baseline
-//	hashdog check     -dir D -baseline B -pub P one-shot verify (exit 1 = changes, 2 = tampered baseline)
-//	hashdog watch     -dir D [-baseline B -pub P] [-interval 5m] [-json] [-syslog]
+//	hashdog baseline  -dir D -key K -out B [-exclude G]... [-config F]  write a signed baseline
+//	hashdog check     -dir D -baseline B -pub P one-shot verify (exit 1 = changes, 2 = tampered baseline, 4 = legacy/unsupported baseline format)
+//	hashdog watch     -dir D [-baseline B -pub P] [-interval 5m] [-paranoid] [-json] [-syslog]
 //	hashdog proof     -dir D -file REL          Merkle inclusion proof (JSON) + self-check
+//	hashdog version                              print version and baseline format
 //	hashdog verify-proof -proof F -root HEX     verify a proof offline
 package main
 
@@ -20,12 +21,22 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/DakodaStemen/hashdog/internal/baseline"
+	"github.com/DakodaStemen/hashdog/internal/config"
+	"github.com/DakodaStemen/hashdog/internal/filter"
 	"github.com/DakodaStemen/hashdog/internal/merkle"
 	"github.com/DakodaStemen/hashdog/internal/scanner"
+)
+
+// Set at release time by goreleaser via -ldflags.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 func main() {
@@ -47,6 +58,8 @@ func main() {
 		err = cmdProof(args)
 	case "verify-proof":
 		err = cmdVerifyProof(args)
+	case "version", "-version", "--version":
+		fmt.Println(versionString())
 	default:
 		usage()
 	}
@@ -58,11 +71,48 @@ func main() {
 		if errors.Is(err, errChanges) {
 			os.Exit(1)
 		}
+		if errors.Is(err, baseline.ErrLegacyFormat) || errors.Is(err, baseline.ErrUnsupportedVersion) {
+			os.Exit(4)
+		}
 		os.Exit(3)
 	}
 }
 
 var errChanges = errors.New("changes detected")
+
+// multiFlag is a repeatable string flag.
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
+// ruleFlags are the -config/-include/-exclude flags shared by baseline, check
+// and watch.
+type ruleFlags struct {
+	cfg              *string
+	include, exclude multiFlag
+}
+
+func addRuleFlags(fs *flag.FlagSet) *ruleFlags {
+	r := &ruleFlags{}
+	r.cfg = fs.String("config", "", "YAML/JSON file with include/exclude glob rules")
+	fs.Var(&r.exclude, "exclude", "glob to leave out of the tree (repeatable; e.g. '*.log', 'var/cache/**')")
+	fs.Var(&r.include, "include", "glob allow-list for files (repeatable); if given, only matching files are monitored")
+	return r
+}
+
+// rules merges the config file and flags into one compiled set (nil if none).
+func (r *ruleFlags) rules() (*filter.Rules, error) {
+	inc, exc := []string(r.include), []string(r.exclude)
+	if *r.cfg != "" {
+		c, err := config.Load(*r.cfg)
+		if err != nil {
+			return nil, err
+		}
+		inc, exc = append(c.Include, inc...), append(c.Exclude, exc...)
+	}
+	return filter.New(inc, exc)
+}
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: hashdog <keygen|baseline|check|watch|proof|verify-proof> [flags]")
@@ -89,29 +139,54 @@ func cmdBaseline(args []string) error {
 	dir := fs.String("dir", ".", "directory to snapshot")
 	key := fs.String("key", "hashdog.key", "private key file")
 	out := fs.String("out", "baseline.json", "output file")
+	rf := addRuleFlags(fs)
 	fs.Parse(args)
 	priv, err := baseline.ReadPrivateKey(*key)
 	if err != nil {
 		return err
 	}
-	tree, err := merkle.Build(*dir)
+	rules, err := rf.rules()
 	if err != nil {
 		return err
 	}
-	if err := baseline.Save(*out, baseline.Sign(tree, priv, time.Now())); err != nil {
+	tree, err := merkle.BuildWith(*dir, merkle.Options{Rules: rules})
+	if err != nil {
+		return err
+	}
+	if err := baseline.Save(*out, baseline.SignWith(tree, priv, time.Now(), rules)); err != nil {
 		return err
 	}
 	fmt.Printf("signed baseline %s  root=%s\n", *out, tree.HexHash())
 	return nil
 }
 
-func loadBaseline(path, pubPath, dir string) (*merkle.Node, error) {
+// loadBaseline verifies the baseline and returns its tree and the include/
+// exclude rules it was signed with. Rules given on the command line or in a
+// config file must equal the signed ones: scanning with different rules would
+// report phantom ADDED/REMOVED files, and letting an unsigned file widen the
+// exclusions would let an attacker hide changes.
+func loadBaseline(path, pubPath, dir string, rf *ruleFlags) (*merkle.Node, *filter.Rules, error) {
 	pub, err := baseline.ReadPublicKey(pubPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	_, tree, err := baseline.Load(path, pub, dir)
-	return tree, err
+	f, tree, err := baseline.Load(path, pub, dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	signed, err := f.Rules()
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", baseline.ErrTampered, err)
+	}
+	given, err := rf.rules()
+	if err != nil {
+		return nil, nil, err
+	}
+	if given != nil && !filter.Equal(given, signed) {
+		return nil, nil, errors.New("include/exclude rules differ from the ones signed into the baseline; " +
+			"omit them to use the signed rules, or re-create the baseline with the new rules")
+	}
+	return tree, signed, nil
 }
 
 func sinks(jsonOut, sys bool) ([]scanner.Sink, error) {
@@ -138,8 +213,9 @@ func cmdCheck(args []string) error {
 	pub := fs.String("pub", "hashdog.pub", "public key")
 	js := fs.Bool("json", false, "JSON-lines alerts")
 	sys := fs.Bool("syslog", false, "also send alerts to syslog")
+	rf := addRuleFlags(fs)
 	fs.Parse(args)
-	tree, err := loadBaseline(*bl, *pub, *dir)
+	tree, rules, err := loadBaseline(*bl, *pub, *dir, rf)
 	if err != nil {
 		return err
 	}
@@ -147,7 +223,7 @@ func cmdCheck(args []string) error {
 	if err != nil {
 		return err
 	}
-	m, err := scanner.New(scanner.Config{Root: *dir, Baseline: tree, Sinks: sk, Quiet: true})
+	m, err := scanner.New(scanner.Config{Root: *dir, Baseline: tree, Rules: rules, Sinks: sk, Quiet: true})
 	if err != nil {
 		return err
 	}
@@ -164,19 +240,26 @@ func cmdWatch(args []string) error {
 	interval := fs.Duration("interval", 5*time.Minute, "periodic full-verify interval (0 disables)")
 	events := fs.Bool("events", true, "react to filesystem events (fsnotify)")
 	debounce := fs.Duration("debounce", 200*time.Millisecond, "event coalescing window")
+	paranoid := fs.Bool("paranoid", false, "never use the stat cache: every scan (including event-triggered) rehashes every file")
 	bl := fs.String("baseline", "", "signed baseline to start from (optional)")
 	pub := fs.String("pub", "hashdog.pub", "public key for -baseline")
 	js := fs.Bool("json", false, "JSON-lines alerts")
 	sys := fs.Bool("syslog", false, "also send alerts to syslog")
+	rf := addRuleFlags(fs)
 	fs.Parse(args)
 
-	cfg := scanner.Config{Root: *dir, Interval: *interval, Watch: *events, Debounce: *debounce}
+	cfg := scanner.Config{Root: *dir, Interval: *interval, Watch: *events, Debounce: *debounce, Paranoid: *paranoid}
 	if *bl != "" {
-		tree, err := loadBaseline(*bl, *pub, *dir)
+		tree, rules, err := loadBaseline(*bl, *pub, *dir, rf)
 		if err != nil {
 			return err
 		}
-		cfg.Baseline = tree
+		cfg.Baseline, cfg.Rules = tree, rules
+	} else {
+		var err error
+		if cfg.Rules, err = rf.rules(); err != nil {
+			return err
+		}
 	}
 	var err error
 	if cfg.Sinks, err = sinks(*js, *sys); err != nil {
@@ -198,11 +281,16 @@ func cmdProof(args []string) error {
 	dir := fs.String("dir", ".", "watched directory")
 	file := fs.String("file", "", "file path relative to -dir")
 	out := fs.String("out", "", "write proof JSON here (default: stdout)")
+	rf := addRuleFlags(fs)
 	fs.Parse(args)
 	if *file == "" {
 		return errors.New("-file is required")
 	}
-	tree, err := merkle.Build(*dir)
+	rules, err := rf.rules()
+	if err != nil {
+		return err
+	}
+	tree, err := merkle.BuildWith(*dir, merkle.Options{Rules: rules})
 	if err != nil {
 		return err
 	}
@@ -249,8 +337,13 @@ func cmdVerifyProof(args []string) error {
 		if _, err := io.Copy(h, f); err != nil {
 			return err
 		}
-		if got := hex.EncodeToString(h.Sum(nil)); got != p.LeafHash {
-			return fmt.Errorf("file %s hashes to %s, proof is for %s", filepath.Base(*content), got, p.LeafHash)
+		if got := hex.EncodeToString(h.Sum(nil)); got != p.ContentHash {
+			return fmt.Errorf("file %s hashes to %s, proof is for content %s", filepath.Base(*content), got, p.ContentHash)
+		}
+		// Metadata is bound to the leaf by the proof itself (checked in Verify);
+		// compare the live file against it so a chmod'ed copy is flagged.
+		if fi, err := os.Lstat(*content); err == nil && merkle.ModeBits(fi.Mode()) != p.Mode {
+			fmt.Fprintf(os.Stderr, "warning: %s has mode %o, proof recorded %o\n", filepath.Base(*content), merkle.ModeBits(fi.Mode()), p.Mode)
 		}
 	}
 	if err := p.Verify(*root); err != nil {
@@ -261,3 +354,7 @@ func cmdVerifyProof(args []string) error {
 }
 
 func init() { log.SetFlags(log.Ltime) }
+
+func versionString() string {
+	return fmt.Sprintf("hashdog %s (commit %s, built %s, baseline format v%d)", version, commit, date, baseline.Version)
+}

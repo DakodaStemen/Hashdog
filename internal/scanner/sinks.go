@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -14,6 +15,12 @@ func TextSink(w io.Writer) Sink {
 		mu.Lock()
 		defer mu.Unlock()
 		fmt.Fprintf(w, "[ALERT] %-8s %s  (%s)\n", e.Kind, e.Path, e.Source)
+		if len(e.Attack) > 0 {
+			fmt.Fprintf(w, "        attack: %s\n", strings.Join(e.Attack, ","))
+		}
+		if len(e.Changed) > 0 {
+			fmt.Fprintf(w, "        changed: %s\n", strings.Join(e.Changed, ","))
+		}
 		if e.OldHash != "" {
 			fmt.Fprintf(w, "        old: %s\n", e.OldHash[:16]+"…")
 		}
@@ -36,5 +43,12 @@ func JSONSink(w io.Writer) Sink {
 
 // FormatLine renders an event as a single line (used for syslog).
 func FormatLine(e Event) string {
-	return fmt.Sprintf("%s path=%q old=%s new=%s source=%s", e.Kind, e.Path, e.OldHash, e.NewHash, e.Source)
+	l := fmt.Sprintf("%s path=%q old=%s new=%s source=%s", e.Kind, e.Path, e.OldHash, e.NewHash, e.Source)
+	if len(e.Changed) > 0 {
+		l += " changed=" + strings.Join(e.Changed, ",")
+	}
+	if len(e.Attack) > 0 {
+		l += " attack=" + strings.Join(e.Attack, ",")
+	}
+	return l
 }

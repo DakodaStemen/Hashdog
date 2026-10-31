@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/DakodaStemen/hashdog/internal/filter"
 	"github.com/DakodaStemen/hashdog/internal/merkle"
 	"github.com/DakodaStemen/hashdog/internal/scanner"
 )
@@ -127,7 +129,7 @@ func TestJSONAndTextSinks(t *testing.T) {
 	var jb bytes.Buffer
 	scanner.JSONSink(&jb)(e)
 	var back scanner.Event
-	if err := json.Unmarshal(jb.Bytes(), &back); err != nil || back != e {
+	if err := json.Unmarshal(jb.Bytes(), &back); err != nil || !reflect.DeepEqual(back, e) {
 		t.Fatalf("json round trip: %v %+v", err, back)
 	}
 	var tb bytes.Buffer
@@ -137,5 +139,107 @@ func TestJSONAndTextSinks(t *testing.T) {
 	}
 	if l := scanner.FormatLine(e); !strings.Contains(l, `path="/x"`) {
 		t.Fatal(l)
+	}
+}
+
+func TestEventCarriesChangedFields(t *testing.T) {
+	root := t.TempDir()
+	f := filepath.Join(root, "f")
+	os.WriteFile(f, []byte("a"), 0o644)
+	c := &collector{}
+	m, _ := scanner.New(scanner.Config{Root: root, Sinks: []scanner.Sink{c.sink}, Quiet: true})
+	os.Chmod(f, 0o700)
+	m.Scan("periodic", true)
+	e := waitFor(t, c, "MODIFIED", "f")
+	if !reflect.DeepEqual(e.Changed, []string{"mode"}) {
+		t.Fatalf("changed=%v", e.Changed)
+	}
+	var tb bytes.Buffer
+	scanner.TextSink(&tb)(e)
+	if !strings.Contains(tb.String(), "changed: mode") || !strings.Contains(scanner.FormatLine(e), "changed=mode") {
+		t.Fatal("sinks should show changed fields")
+	}
+}
+
+// Poison the cached content hash of an otherwise-trusted entry: an event scan
+// that reuses it reports a bogus change, a paranoid one re-reads the file and
+// reports none. This distinguishes "cache used" from "cache bypassed".
+func TestParanoidBypassesCache(t *testing.T) {
+	run := func(paranoid bool) int {
+		root := t.TempDir()
+		os.WriteFile(filepath.Join(root, "f"), []byte("a"), 0o644)
+		base, _ := merkle.Build(root)
+		leaf := base.Children[0]
+		leaf.Hashed = time.Now().Add(time.Minute)
+		leaf.ContentHash = [32]byte{0xEE}
+		m, _ := scanner.New(scanner.Config{Root: root, Baseline: base, Paranoid: paranoid, Quiet: true})
+		return len(m.Scan("event", false))
+	}
+	if run(false) == 0 {
+		t.Skip("platform has no ctime: cache disabled")
+	}
+	if n := run(true); n != 0 {
+		t.Fatalf("paranoid scan reused cache (%d changes)", n)
+	}
+}
+
+func TestExcludedEventsAreSilent(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "cache"), 0o755)
+	os.WriteFile(filepath.Join(root, "keep"), []byte("1"), 0o644)
+	rules, _ := filter.New(nil, []string{"cache/", "*.log"})
+	c := &collector{}
+	m, _ := scanner.New(scanner.Config{Root: root, Watch: true, Debounce: 50 * time.Millisecond, Rules: rules,
+		Sinks: []scanner.Sink{c.sink}, Quiet: true})
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() { m.Run(done); close(stopped) }()
+	defer func() { close(done); <-stopped }()
+	time.Sleep(200 * time.Millisecond)
+
+	os.WriteFile(filepath.Join(root, "cache", "blob"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(root, "app.log"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(root, "keep"), []byte("2"), 0o644)
+	waitFor(t, c, "MODIFIED", "keep")
+	time.Sleep(300 * time.Millisecond)
+	for _, e := range c.snapshot() {
+		if strings.HasSuffix(e.Path, "blob") || strings.HasSuffix(e.Path, ".log") {
+			t.Fatalf("alert for excluded path: %+v", e)
+		}
+	}
+}
+
+func TestJSONAlertCarriesAttackField(t *testing.T) {
+	e := scanner.Event{Time: time.Unix(0, 0).UTC(), Kind: "MODIFIED", Path: "/etc/passwd", Source: "event", Attack: []string{"T1098", "T1136.001"}}
+	var jb bytes.Buffer
+	scanner.JSONSink(&jb)(e)
+	var raw map[string]any
+	if err := json.Unmarshal(jb.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := raw["attack"].([]any)
+	if len(got) != 2 || got[0] != "T1098" || got[1] != "T1136.001" {
+		t.Fatalf("attack=%v in %s", raw["attack"], jb.String())
+	}
+	if !strings.Contains(scanner.FormatLine(e), "attack=T1098,T1136.001") {
+		t.Fatal(scanner.FormatLine(e))
+	}
+	// no mapping -> field omitted entirely
+	jb.Reset()
+	scanner.JSONSink(&jb)(scanner.Event{Kind: "ADDED", Path: "/srv/x"})
+	if strings.Contains(jb.String(), "attack") {
+		t.Fatalf("empty attack must be omitted: %s", jb.String())
+	}
+}
+
+func TestScanTagsMappedPathsOnly(t *testing.T) {
+	root := t.TempDir() // not under /etc, so nothing should be tagged
+	os.WriteFile(filepath.Join(root, "passwd"), []byte("a"), 0o644)
+	c := &collector{}
+	m, _ := scanner.New(scanner.Config{Root: root, Sinks: []scanner.Sink{c.sink}, Quiet: true})
+	os.WriteFile(filepath.Join(root, "passwd"), []byte("b"), 0o644)
+	m.Scan("periodic", true)
+	if e := waitFor(t, c, "MODIFIED", "passwd"); len(e.Attack) != 0 {
+		t.Fatalf("tmp copy of passwd tagged: %v", e.Attack)
 	}
 }

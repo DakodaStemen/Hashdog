@@ -1,30 +1,62 @@
 # Sample unit. Install:
 #   sudo install -m 0755 hashdog /usr/local/bin/hashdog
-#   sudo install -d /etc/hashdog
-#   sudo hashdog keygen -out /etc/hashdog/hashdog          # keep .key OFF this host after signing!
-#   sudo hashdog baseline -dir /etc -key /etc/hashdog/hashdog.key -out /etc/hashdog/baseline.json
+#   sudo install -d -m 0755 /etc/hashdog
+#   hashdog keygen -out hashdog          # run on a TRUSTED machine; keep hashdog.key off the monitored host
+#   hashdog baseline -dir /etc -key hashdog.key -out baseline.json   # likewise (needs read access to /etc)
+#   sudo install -m 0644 baseline.json hashdog.pub /etc/hashdog/
 #   sudo cp contrib/hashdog.service /etc/systemd/system/ && sudo systemctl enable --now hashdog
 # Read alerts:  journalctl -u hashdog -f      or      journalctl -t hashdog
+# Audit the sandbox:  systemd-analyze security hashdog.service
 [Unit]
 Description=hashdog Merkle-tree file integrity monitor
-After=local-fs.target network.target
+After=local-fs.target
+# Never give up restarting (see Restart= below) -- StartLimit would otherwise
+# leave the monitor dead after a burst of crashes.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/hashdog watch -dir /etc \
     -baseline /etc/hashdog/baseline.json -pub /etc/hashdog/hashdog.pub \
     -interval 15m -json -syslog
-Restart=on-failure
+# Restart whenever it exits, including a clean exit or a kill, so stopping the
+# monitor requires `systemctl stop` (which is logged), not just kill -9.
+Restart=always
 RestartSec=5
+# ...except for exit 2/4/64: tampered baseline, legacy/unsupported baseline
+# format, bad usage. Restarting cannot fix these and would only spam the log.
+RestartPreventExitStatus=2 4 64
 
-# Hardening: it only needs to read the watched tree and talk to syslog.
+# --- Sandbox: it only reads the watched tree and talks to syslog ---------
+# Whole filesystem read-only (also /home, /root); no writable paths needed.
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
+PrivateDevices=true
 NoNewPrivileges=true
+# Root without CAP_DAC_OVERRIDE can still *read* any file via CAP_DAC_READ_SEARCH,
+# and nothing else. No ambient capabilities are needed when running as root.
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH
-AmbientCapabilities=CAP_DAC_READ_SEARCH
-ReadOnlyPaths=/etc
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+# syslog (/dev/log) is a unix socket; inotify needs no socket at all.
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
