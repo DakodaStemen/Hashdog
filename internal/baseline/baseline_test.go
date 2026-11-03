@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DakodaStemen/hashdog/internal/baseline"
-	"github.com/DakodaStemen/hashdog/internal/filter"
-	"github.com/DakodaStemen/hashdog/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/baseline"
+	"github.com/DakodaStemen/custos/internal/filter"
+	"github.com/DakodaStemen/custos/internal/merkle"
 )
 
 func setup(t *testing.T) (root, bl string, tree *merkle.Node) {

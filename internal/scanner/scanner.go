@@ -17,9 +17,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/DakodaStemen/hashdog/internal/attack"
-	"github.com/DakodaStemen/hashdog/internal/filter"
-	"github.com/DakodaStemen/hashdog/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/attack"
+	"github.com/DakodaStemen/custos/internal/filter"
+	"github.com/DakodaStemen/custos/internal/merkle"
 	"github.com/fsnotify/fsnotify"
 )
 

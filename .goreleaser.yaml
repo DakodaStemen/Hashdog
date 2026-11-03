@@ -52,7 +52,7 @@ nfpms:
     package_name: hashdog
     formats: [deb, rpm]
     maintainer: Dakoda Stemen
-    homepage: https://github.com/DakodaStemen/Hashdog
+    homepage: https://github.com/DakodaStemen/custos
     description: Merkle-tree file integrity monitor with signed baselines
     license: MIT
     contents:

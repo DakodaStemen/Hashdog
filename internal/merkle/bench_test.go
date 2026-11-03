@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/DakodaStemen/hashdog/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/merkle"
 )
 
 // Set HASHDOG_BENCH_DIR to a corpus directory to run these.

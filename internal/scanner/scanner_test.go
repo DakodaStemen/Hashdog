@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DakodaStemen/hashdog/internal/filter"
-	"github.com/DakodaStemen/hashdog/internal/merkle"
-	"github.com/DakodaStemen/hashdog/internal/scanner"
+	"github.com/DakodaStemen/custos/internal/filter"
+	"github.com/DakodaStemen/custos/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/scanner"
 )
 
 type collector struct {

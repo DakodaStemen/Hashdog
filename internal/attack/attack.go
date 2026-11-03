@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/DakodaStemen/hashdog/internal/filter"
+	"github.com/DakodaStemen/custos/internal/filter"
 )
 
 // Rule ties a path glob to technique IDs.

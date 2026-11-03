@@ -49,7 +49,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DakodaStemen/hashdog/internal/filter"
+	"github.com/DakodaStemen/custos/internal/filter"
 )
 
 // Kind distinguishes a file leaf from a directory inner node.

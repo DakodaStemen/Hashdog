@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DakodaStemen/hashdog/internal/filter"
-	"github.com/DakodaStemen/hashdog/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/filter"
+	"github.com/DakodaStemen/custos/internal/merkle"
 )
 
 func TestExcludedPathsDoNotAffectRoot(t *testing.T) {

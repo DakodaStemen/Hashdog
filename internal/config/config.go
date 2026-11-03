@@ -23,7 +23,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/DakodaStemen/hashdog/internal/filter"
+	"github.com/DakodaStemen/custos/internal/filter"
 )
 
 // File is the on-disk schema.

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DakodaStemen/hashdog/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/merkle"
 )
 
 func findLeaf(t *testing.T, n *merkle.Node, suffix string) *merkle.Node {

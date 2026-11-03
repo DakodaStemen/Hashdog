@@ -1,7 +1,7 @@
 package merkle_test
 
 import (
-	"github.com/DakodaStemen/hashdog/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/merkle"
 	"os"
 	"path/filepath"
 	"testing"

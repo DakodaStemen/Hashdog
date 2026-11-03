@@ -25,11 +25,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/DakodaStemen/hashdog/internal/baseline"
-	"github.com/DakodaStemen/hashdog/internal/config"
-	"github.com/DakodaStemen/hashdog/internal/filter"
-	"github.com/DakodaStemen/hashdog/internal/merkle"
-	"github.com/DakodaStemen/hashdog/internal/scanner"
+	"github.com/DakodaStemen/custos/internal/baseline"
+	"github.com/DakodaStemen/custos/internal/config"
+	"github.com/DakodaStemen/custos/internal/filter"
+	"github.com/DakodaStemen/custos/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/scanner"
 )
 
 // Set at release time by goreleaser via -ldflags.
