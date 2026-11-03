@@ -3,7 +3,7 @@ package merkle_test
 import (
 	"testing"
 
-	"github.com/DakodaStemen/hashdog/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/merkle"
 )
 
 func TestProofRoundTrip(t *testing.T) {

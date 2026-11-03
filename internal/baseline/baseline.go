@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DakodaStemen/hashdog/internal/filter"
-	"github.com/DakodaStemen/hashdog/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/filter"
+	"github.com/DakodaStemen/custos/internal/merkle"
 )
 
 // Version is the baseline format this build writes and reads.

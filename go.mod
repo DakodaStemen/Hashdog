@@ -1,4 +1,4 @@
-module github.com/DakodaStemen/hashdog
+module github.com/DakodaStemen/custos
 
 go 1.23
 

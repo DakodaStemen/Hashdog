@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DakodaStemen/hashdog/internal/merkle"
+	"github.com/DakodaStemen/custos/internal/merkle"
 )
 
 // writeVersioned signs and writes a baseline claiming the given version.

@@ -1,3 +1,7 @@
+# Custos
+
+Formerly Hashdog.
+
 ```text
  _               _         _
 | |__   __ _ ___| |__   __| | ___   __ _
@@ -7,7 +11,7 @@
                                     |___/   Merkle-tree file integrity monitor
 ```
 
-[![CI](https://github.com/DakodaStemen/Hashdog/actions/workflows/ci.yml/badge.svg)](https://github.com/DakodaStemen/Hashdog/actions/workflows/ci.yml)
+[![CI](https://github.com/DakodaStemen/custos/actions/workflows/ci.yml/badge.svg)](https://github.com/DakodaStemen/custos/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.23+-00ADD8.svg)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -30,7 +34,7 @@ hashdog watches a directory tree and tells you when a file is **modified, added 
 ## Quick start
 
 ```bash
-go install github.com/DakodaStemen/hashdog@latest   # or: go build -o hashdog .
+go install github.com/DakodaStemen/custos@latest   # installs a binary named "custos"; or: go build -o hashdog .
 
 hashdog keygen   -out hashdog                              # hashdog.key (secret) + hashdog.pub
 hashdog baseline -dir /etc -key hashdog.key -out baseline.json
@@ -202,7 +206,7 @@ Tagging `vX.Y.Z` triggers `.github/workflows/release.yml`, which runs the tests 
 ```bash
 sha256sum -c checksums.txt --ignore-missing
 cosign verify-blob checksums.txt --signature checksums.txt.sig --certificate checksums.txt.pem \
-  --certificate-identity-regexp 'https://github.com/DakodaStemen/Hashdog/\.github/workflows/release\.yml@refs/tags/v.*' \
+  --certificate-identity-regexp 'https://github.com/DakodaStemen/custos/\.github/workflows/release\.yml@refs/tags/v.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DakodaStemen/hashdog/internal/baseline"
+	"github.com/DakodaStemen/custos/internal/baseline"
 )
 
 func TestCLIFlow(t *testing.T) {
