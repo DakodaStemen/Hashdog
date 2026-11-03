@@ -1,3 +1,9 @@
 /hashdog
 *.key
 dist/
+
+# Environment and local tooling
+.env
+.venv/
+*.test
+*.out

@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Binary: never normalised
+*.gif binary
+*.png binary
+*.tar.gz binary
+
+# Lock files: collapsed in PR diffs
+go.sum linguist-generated

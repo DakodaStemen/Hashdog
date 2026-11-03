@@ -84,11 +84,13 @@ The rules are **signed into the baseline**. `check`/`watch` scan with exactly th
 **Goal:** detect unauthorized changes to files under a watched directory, and detect tampering with the baseline used to judge them.
 
 **In scope**
+
 - An attacker who modifies, adds, removes or `chmod`/`chown`s files, or retargets symlinks, under the watched tree (detected on the next event or periodic scan).
 - An attacker who edits the stored baseline, or swaps in one signed with another key (rejected: ed25519 signature + recomputed directory hashes).
 - An attacker who edits an unsigned config to hide paths (rules are signed; mismatches are refused).
 
 **Out of scope / not defended**
+
 - An attacker with root on the monitored host can kill or patch the daemon, replace the binary, or tamper with the alert stream. Run from systemd and ship alerts off-host; hashdog has no tamper-evident alert log yet.
 - Compromise of the signing key or a public key obtained from an untrusted place.
 - Changes between a bad initial state and baseline creation: the baseline is only as trustworthy as the state it was taken from.
@@ -193,6 +195,7 @@ Corpus: 8,000 random files (4–128 KiB), 532 MB, warm page cache; AMD Ryzen 7 5
 ## Limitations
 
 > [!CAUTION]
+>
 > - **The stat cache trusts size, mtime, ctime, inode and device** on event-triggered scans (best-effort; a platform without ctime never gets cache hits). A root attacker who can defeat it evades event scans until the next periodic full verify. Use `-paranoid` to disable the cache.
 > - Directory hashes cover child *hashes* only, not names: a pure rename of a file that keeps its sort position among siblings leaves the directory hash unchanged and may go undetected. (Mode/uid/gid/symlink target are covered by v2 leaves.)
 > - Extended attributes, ACLs and timestamps are not hashed.
@@ -215,11 +218,11 @@ cosign verify-blob checksums.txt --signature checksums.txt.sig --certificate che
 ## Development
 
 ```bash
-go vet ./... && go test -race ./...
+make ci   # gofmt + go vet + shellcheck, go test -race, build
 ```
 
 Layout: `main.go` (CLI) · `internal/merkle` (tree, diff, proofs, snapshots) · `internal/baseline` (signing) · `internal/scanner` (event/periodic loop, sinks) · `bench/` · `contrib/` · `docs/`.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Security: [SECURITY.md](SECURITY.md). History: [CHANGELOG.md](CHANGELOG.md). Decisions: [docs/adr](docs/adr/README.md).
